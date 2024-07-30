@@ -10,6 +10,7 @@ from glob import glob
 from tqdm import tqdm
 from PIL import Image
 from LaKDNet import LaKDNet
+from models import Generator_blur
 import argparse
 
 class ImageDataset_test(Dataset):
@@ -32,6 +33,11 @@ class ImageDataset_test(Dataset):
         image = cv2.imread(img_path, cv2.COLOR_BGR2RGB)
         mask_img = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
         mask2_img = cv2.imread(mask2_path, cv2.IMREAD_GRAYSCALE)
+        mask_img = (mask_img > 0.5).astype(np.float32)
+        mask2_img = (mask2_img > 0.5).astype(np.float32)
+
+        # _, mask_img = cv2.threshold(mask_img, 128, 255, cv2.THRESH_BINARY)
+        # _, mask2_img = cv2.threshold(mask2_img, 128, 255, cv2.THRESH_BINARY)
 
         if self.transform:
             image = self.transform(image)
@@ -150,18 +156,19 @@ def concat_images(file_path, idx):
         combined_image.paste(image, (x, y))
 
     # 保存合併後的圖片
-    combined_image.save(os.path.join(file_path, 'img', f'{idx}.png'))
+    os.makedirs(os.path.join(file_path, 'img2'), exist_ok=True)
+    combined_image.save(os.path.join(file_path, 'img2', f'{idx}.png'))
 
 def test(genC, genB, result_path, image_path, mask_path, mask2_path):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if not torch.cuda.is_available():
-        generator_clear = LaKDNet(inp_channels=4, out_channels=3, dim=16, num_blocks=[1, 2, 2, 3], mix_kernel_size=[1, 3, 5, 7],
+        generator_clear = LaKDNet(inp_channels=4, out_channels=3, dim=16, num_blocks=[1, 2, 3, 4, 5], mix_kernel_size=[1, 3, 5, 7, 9],
                 ffn_expansion_factor=2.3, bias=False, LayerNorm_type='WithBias', dual_pixel_task=False)
-        generator_blur = Generator()
+        generator_blur = Generator_blur()
     else:
-        generator_clear = LaKDNet(inp_channels=4, out_channels=3, dim=16, num_blocks=[1, 2, 2, 3], mix_kernel_size=[1, 3, 5, 7],
+        generator_clear = LaKDNet(inp_channels=4, out_channels=3, dim=16, num_blocks=[1, 2, 3, 4, 5], mix_kernel_size=[1, 3, 5, 7, 9],
                 ffn_expansion_factor=2.3, bias=False, LayerNorm_type='WithBias', dual_pixel_task=False).cuda()
-        generator_blur = Generator().cuda()
+        generator_blur = Generator_blur().cuda()
 
     generator_clear.load_state_dict(torch.load(genC))
     generator_clear.eval()
@@ -173,7 +180,9 @@ def test(genC, genB, result_path, image_path, mask_path, mask2_path):
     for i, (img, mask_img, mask2_img) in tqdm(enumerate(dataloader)):
         img, mask_img, mask2_img = img.to(device), mask_img.to(device), mask2_img.to(device)
 
-        output = generator_blur(img, mask_img)
+        print(mask_img, mask2_img)
+        mask_img2 = mask_img-mask_img&mask2_img
+        output = generator_blur(img, mask_img2)
         output = generator_clear(output, mask2_img)
 
         # output2 = generator_clear(mask2_path)
@@ -188,12 +197,12 @@ def test(genC, genB, result_path, image_path, mask_path, mask2_path):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PyTorch Template')
-    parser.add_argument('--genC', default='./0709_result/3/save/saved_models_cycle/generator_clear.pth',type=str)
-    parser.add_argument('--genB', default='./0709_result/3/save/saved_models_cycle/generator_blur.pth',type=str)
+    parser.add_argument('--genC', default='./0730_result/2(patchD)/saved_models105/generator_clear.pth',type=str)
+    parser.add_argument('--genB', default='./0730_result/2(patchD)/saved_models105/generator_blur.pth',type=str)
     parser.add_argument('--image_path', default='/home/oscar/Desktop/dataset/DPDD/dd_dp_dataset_png/train_c/source', type=str)
     parser.add_argument('--mask_path', default='/home/oscar/Desktop/SG/source_map', type=str)
     parser.add_argument('--mask2_path', default='/home/oscar/Desktop/0301_dpdd_seg/dpdd_seg_mask_copy', type=str)
-    parser.add_argument('--mask_save_path', default='./0709_result/test', type=str)
+    parser.add_argument('--mask_save_path', default='./0730_result/test', type=str)
     args=parser.parse_args()
     #test
     test(args.genC, args.genB, args.mask_save_path,args.image_path, args.mask_path, args.mask2_path)
